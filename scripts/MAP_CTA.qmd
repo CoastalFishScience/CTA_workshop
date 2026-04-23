@@ -1,0 +1,1127 @@
+---
+title: "Paths of Change: Community Trajectory Aanalysis of Everglades fish assemblages over 20 years"
+authors: "James Sturges"
+date-modified: 30 July 2025
+format: html
+editor: visual
+format: html
+editor: visual
+---
+
+## **Section 1: Data Wrangling**
+
+##### - Required Packages
+
+```{r}
+#| warning: false
+#| message: false
+library(raster) 
+library(gdm)            
+library(reshape2)         
+library(lme4)             
+library(MASS)             
+library(AER)
+library(vegan)              
+library(ecotraj)
+library(purrr)
+library(RColorBrewer)
+library(vegclust)
+library(ecotraj)
+library(smacof)
+library(tidyverse)
+library(lubridate)
+library(remotes)
+library(devtools)
+```
+
+##### - Raw Data Availability
+
+```{r}
+#MAP master file 
+raw_data = read.csv("data/MAP_master.csv")
+
+```
+
+##### - Site Metadata
+
+```{r}
+#| warning: false
+#site metadata (15 long-term sites with 3, 100m bouts of electrofishing)
+site_metadata <- read.csv("data/map_waypoints.csv")
+```
+
+##### - Species Metadata
+
+```{r}
+species_metadata = read.csv("data/spp_codes.csv")
+```
+
+##### - Joining Species Metadata
+
+```{r}
+# Join the dataframes
+raw_data <- raw_data %>%
+  mutate(code = as.character(code))
+# 
+species_metadata <- species_metadata %>%
+  mutate(code = as.character(code))
+
+MAP <- raw_data %>%
+  left_join(species_metadata, by = "code")
+```
+
+##### - Joining Site Metadata
+
+```{r}
+MAP = MAP %>% 
+  mutate(drainage.site = paste0(drainage,site))
+
+MAP = MAP %>% 
+  mutate(drainage.site.bout = paste0(drainage,site,"B",bout))
+
+MAP = MAP %>% 
+  mutate(drainage.site.year = paste0(drainage,site,"-", year))
+
+site_metadata <- site_metadata %>%
+      rename("drainage.site.bout" = "Site.Name")
+
+```
+
+##### - Standardize Sampling Effort
+
+```{r}
+core = c("RB8", "RB9", "RB10", "RB11", "RB13")
+
+MAP_core_sites <- MAP %>%
+  filter(drainage.site %in% core)
+
+
+# Count number of unique months sampled at each site-year combination
+site_year_month_summary <- MAP_core_sites %>%
+  distinct(site, year, month) %>%
+  group_by(site, year) %>%
+  summarise(n_months = n_distinct(month), .groups = "drop") %>%
+  pivot_wider(names_from = year, values_from = n_months, values_fill = 0)
+
+
+site_month_check <- MAP_core_sites %>%
+  distinct(drainage.site.year, month) %>%
+  mutate(sampled = 1) %>%
+  pivot_wider(names_from = month, values_from = sampled, values_fill = 0)
+
+
+# Generate the presence table
+presence_matrix <- MAP_core_sites %>%
+  distinct(site, year, month) %>%
+  mutate(present = 1) %>%
+  complete(site, year, month, fill = list(present = 0))  # Ensure all combos exist
+
+# Count number of sites that have a given year × month
+site_counts <- presence_matrix %>%
+  group_by(year, month) %>%
+  summarise(n_sites_sampled = sum(present), .groups = "drop")
+
+# Total number of unique sites
+n_sites_total <- MAP_core_sites %>% pull(site) %>% unique() %>% length()
+
+# Filter to only year-months sampled by all sites
+complete_year_months <- site_counts %>%
+  filter(n_sites_sampled == n_sites_total)
+
+# Use the complete_year_months
+decision_table <- complete_year_months %>%
+  mutate(sampled = 1) %>%
+  pivot_wider(
+    names_from = month,
+    values_from = sampled,
+    values_fill = 0
+  ) %>%
+  arrange(desc(year)) 
+
+years_to_keep <- c("7", "9", "10", "13", "14", "15", "17", "18", "20")  
+months_to_keep <- c("DECEMBER", "FEBRUARY", "MARCH", "APRIL", "MAY")
+
+decision_table <- decision_table |>
+  select(-JANUARY, -NOVEMBER, -SEPTEMBER, -JUNE, -JULY, -AUGUST)
+
+decision_table <- decision_table |>
+  mutate(year = as.character(year))
+
+decision_table <- decision_table |>
+  filter(year %in% years_to_keep)
+
+
+
+MAP_core_sites <- MAP_core_sites |>
+  mutate(year = as.numeric(year))
+
+MAP_core_sites_May = MAP_core_sites |> 
+  filter(month == "MAY")
+MAP_core_sites_April = MAP_core_sites |> 
+  filter(month == "APRIL")
+MAP_core_sites_December = MAP_core_sites |> 
+  filter(month == "DECEMBER")
+
+
+MAP_core_sites = MAP_core_sites|>
+  filter(year %in% years_to_keep)
+
+MAP_core_sites = MAP_core_sites|>
+  filter(month %in% months_to_keep)
+
+
+
+```
+
+##### - Community Assemblages
+
+```{r}
+all_spp = c("American_eel", "Bluegill", "Redear", "Sunfishes", "Spotted_sunfish", "Dollar_sunfish", "Sailfin_molly",
+         "Striped_mojarra", "Striped_mullet", "Hogchoker", "Tidewater_mojarra", "Bluespotted_sunfish", "Warmouth","Florida_gar", "Largemouth_bass", "Snook", "Bowfin", "Redfish", "Gray_snapper", "Mangrove_snapper", "Tarpon","Peacock_eel","Blue_tilapia", "Mayan_cichlid", "Jeweled_cichlid")
+
+
+predator = c("American_eel","Florida_gar", "Largemouth_bass", "Snook", "Bowfin", "Redfish", "Gray_snapper", "Mangrove_snapper", "Tarpon")
+  
+prey = c("Bluegill", "Redear", "Sunfishes", "Spotted_sunfish", "Dollar_sunfish", "Sailfin_molly",
+         "Striped_mojarra", "Striped_mullet", "Hogchoker", "Tidewater_mojarra", "Bluespotted_sunfish", "Warmouth")
+
+invasive = c("Peacock_eel","Blue_tilapia", "Mayan_cichlid", "Jeweled_cichlid")
+
+MAP_core_sites = MAP_core_sites|>
+  filter(common_name %in% all_spp)
+
+MAP_core_sites_May = MAP_core_sites_May|>
+  filter(common_name %in% all_spp)
+MAP_core_sites_December = MAP_core_sites_December|>
+  filter(common_name %in% all_spp)
+MAP_core_sites_April = MAP_core_sites_April|>
+  filter(common_name %in% all_spp)
+
+
+
+
+
+
+df_all_spp <- MAP_core_sites %>%
+  filter(common_name %in% all_spp)
+
+df_predator <- MAP_core_sites %>%
+  filter(common_name %in% predator)
+
+df_prey <- MAP_core_sites %>%
+  filter(common_name %in% prey)
+
+df_invasive <- MAP_core_sites %>%
+  filter(common_name %in% invasive)
+```
+
+##### - Site Color Vectors
+
+```{r}
+site_colors <- c(
+  "RB8" = "#1b9e77",
+  "RB9" = "#d95f02",
+  "RB10" = "#7570b3",
+  "RB11" = "#e7298a",
+  "RB13" = "#1f78b4"
+)
+```
+
+## Section 2: Matrix Generation
+
+##### - Estimate Biomass Function
+
+```{r}
+fill_missing_weights <- function(df) {
+  df <- df %>%
+    mutate(weight_kg = as.numeric(weight_kg))  # Ensure numeric
+  
+  # 1. Species × Site × Year mean
+  species_site_year <- df %>%
+    group_by(species_names, drainage.site, year) %>%
+    summarise(mean_w1 = mean(weight_kg, na.rm = TRUE), .groups = "drop")
+  
+  # 2. Species × Year mean
+  species_year <- df %>%
+    group_by(species_names, year) %>%
+    summarise(mean_w2 = mean(weight_kg, na.rm = TRUE), .groups = "drop")
+  
+  # 3. Species global mean
+  species_overall <- df %>%
+    group_by(species_names) %>%
+    summarise(mean_w3 = mean(weight_kg, na.rm = TRUE), .groups = "drop")
+  
+  # Join fallback means to main dataframe
+  df_filled <- df %>%
+    left_join(species_site_year, by = c("species_names", "drainage.site", "year")) %>%
+    left_join(species_year, by = c("species_names", "year")) %>%
+    left_join(species_overall, by = "species_names") %>%
+    mutate(
+      weight_filled = case_when(
+        !is.na(weight_kg) ~ weight_kg,
+        !is.na(mean_w1) ~ mean_w1,
+        !is.na(mean_w2) ~ mean_w2,
+        !is.na(mean_w3) ~ mean_w3,
+        TRUE ~ NA_real_
+      )
+    ) %>%
+    select(-mean_w1, -mean_w2, -mean_w3)
+  
+  return(df_filled)
+}
+```
+
+##### - Fill Missing Biomass
+
+```{r}
+MAP_core_sites_filled <- fill_missing_weights(MAP_core_sites)
+
+MAP_core_sites_filled_May <- fill_missing_weights(MAP_core_sites_May)
+
+MAP_core_sites_filled_April <- fill_missing_weights(MAP_core_sites_April)
+
+MAP_core_sites_filled_December <- fill_missing_weights(MAP_core_sites_December)
+```
+
+##### - Count Matrix
+
+```{r}
+count_matrix_all <- df_all_spp %>%
+  group_by(drainage.site.year, species_names) %>%
+  summarise(count = n(), .groups = "drop") %>%
+  pivot_wider(names_from = species_names, values_from = count, values_fill = 0)
+
+count_matrix_all <- count_matrix_all %>%
+  column_to_rownames("drainage.site.year")
+
+count_matrix_predator <- df_predator %>%
+  group_by(drainage.site.year, species_names) %>%
+  summarise(count = n(), .groups = "drop") %>%
+  pivot_wider(names_from = species_names, values_from = count, values_fill = 0)
+
+count_matrix_predator <- count_matrix_predator %>%
+  column_to_rownames("drainage.site.year")
+
+count_matrix_prey <- df_prey %>%
+  group_by(drainage.site.year, species_names) %>%
+  summarise(count = n(), .groups = "drop") %>%
+  pivot_wider(names_from = species_names, values_from = count, values_fill = 0)
+
+count_matrix_prey <- count_matrix_prey %>%
+  column_to_rownames("drainage.site.year")
+
+count_matrix_invasive <- df_invasive %>%
+  group_by(drainage.site.year, species_names) %>%
+  summarise(count = n(), .groups = "drop") %>%
+  pivot_wider(names_from = species_names, values_from = count, values_fill = 0)
+
+count_matrix_invasive <- count_matrix_invasive %>%
+  column_to_rownames("drainage.site.year")
+```
+
+##### - Biomass Matrix
+
+```{r}
+biomass_matrix_all <- MAP_core_sites_filled %>%
+  group_by(drainage.site.year, species_names) %>%
+  summarise(biomass_kg = sum(weight_filled, na.rm = TRUE), .groups = "drop") %>%
+  pivot_wider(
+    names_from = species_names,
+    values_from = biomass_kg,
+    values_fill = 0
+  )
+
+biomass_matrix_all <- biomass_matrix_all %>%
+  column_to_rownames("drainage.site.year")
+
+
+biomass_matrix_predator <- MAP_core_sites_filled %>%
+     filter(common_name %in% predator) |> 
+  group_by(drainage.site.year, species_names) %>%
+  summarise(biomass_kg = sum(weight_filled, na.rm = TRUE), .groups = "drop") %>%
+  pivot_wider(
+    names_from = species_names,
+    values_from = biomass_kg,
+    values_fill = 0
+  )
+
+biomass_matrix_predator <- biomass_matrix_predator %>%
+  column_to_rownames("drainage.site.year")
+
+
+biomass_matrix_prey <- MAP_core_sites_filled %>%
+  filter(common_name %in% prey) |> 
+  group_by(drainage.site.year, species_names) %>%
+  summarise(biomass_kg = sum(weight_filled, na.rm = TRUE), .groups = "drop") %>%
+  pivot_wider(
+    names_from = species_names,
+    values_from = biomass_kg,
+    values_fill = 0
+  )
+
+biomass_matrix_prey <- biomass_matrix_prey %>%
+  column_to_rownames("drainage.site.year")
+
+
+biomass_matrix_invasive <- MAP_core_sites_filled %>%
+  filter(common_name %in% invasive) |> 
+  group_by(drainage.site.year, species_names) %>%
+  summarise(biomass_kg = sum(weight_filled, na.rm = TRUE), .groups = "drop") %>%
+  pivot_wider(
+    names_from = species_names,
+    values_from = biomass_kg,
+    values_fill = 0
+  )
+
+biomass_matrix_invasive <- biomass_matrix_invasive %>%
+  column_to_rownames("drainage.site.year")
+```
+
+##### - Biomass Matrix Monthly
+
+```{r}
+biomass_matrix_all_May <- MAP_core_sites_filled_May %>%
+  group_by(drainage.site.year, species_names) %>%
+  summarise(biomass_kg = sum(weight_filled, na.rm = TRUE), .groups = "drop") %>%
+  pivot_wider(
+    names_from = species_names,
+    values_from = biomass_kg,
+    values_fill = 0
+  )
+
+biomass_matrix_all_May <- biomass_matrix_all_May %>%
+  column_to_rownames("drainage.site.year")
+
+
+biomass_matrix_all_April <- MAP_core_sites_filled_April %>%
+  group_by(drainage.site.year, species_names) %>%
+  summarise(biomass_kg = sum(weight_filled, na.rm = TRUE), .groups = "drop") %>%
+  pivot_wider(
+    names_from = species_names,
+    values_from = biomass_kg,
+    values_fill = 0
+  )
+
+biomass_matrix_all_April <- biomass_matrix_all_April %>%
+  column_to_rownames("drainage.site.year")
+
+
+biomass_matrix_all_December <- MAP_core_sites_filled_December %>%
+  group_by(drainage.site.year, species_names) %>%
+  summarise(biomass_kg = sum(weight_filled, na.rm = TRUE), .groups = "drop") %>%
+  pivot_wider(
+    names_from = species_names,
+    values_from = biomass_kg,
+    values_fill = 0
+  )
+
+biomass_matrix_all_December <- biomass_matrix_all_December %>%
+  column_to_rownames("drainage.site.year")
+
+
+```
+
+## Section 3: CTA Ordinations
+
+##### - Count x All Species
+
+```{r}
+# ---- 1. Create Bray-Curtis Dissimilarity Matrix ----
+dist_bray_all <- vegdist(count_matrix_all, method = "bray")
+
+# ---- 2. Extract metadata from rownames ----
+meta_from_rownames <- data.frame(
+  drainage_site_year = rownames(count_matrix_all),
+  stringsAsFactors = FALSE
+) %>%
+  separate(drainage_site_year, into = c("site", "year"), sep = "-", remove = FALSE)
+
+# Define grouping (site) and time (year) vectors
+sites <- meta_from_rownames$site
+years <- as.numeric(meta_from_rownames$year)
+
+x <- defineTrajectories(
+  d = dist_bray_all,
+  sites = meta_from_rownames$site,
+  times = as.numeric(meta_from_rownames$year)
+)
+
+# Optional: Define colors for each site
+site_colors <- c("RB8" = "#1b9e77",
+                 "RB9" = "#d95f02",
+                 "RB10" = "#7570b3",
+                 "RB11" = "#e7298a",
+                 "RB13" = "#1f78b4")
+
+# ---- 3. Generate CTA Plot ----
+# Create plot and immediately save to file
+png(filename = "figures/CTA/all_spp_count_trajectory_plot.png", width = 8, height = 8, res = 300, units = "in")
+
+trajectoryPCoA(x,
+  d = dist_bray_all,
+  sites = sites,
+  surveys = years,
+  survey.labels = T,
+  traj.colors = site_colors,
+  lwd = 2
+)
+
+legend("topleft", bty = "n",
+       legend = names(site_colors),
+       col = site_colors,
+       lwd = 2)
+
+dev.off()
+
+
+# ---- 1. Compute CTA Metrics ----
+# Lengths
+lengths_all <- trajectoryLengths(x)
+lengths_all_df <- lengths_all %>%
+  rownames_to_column(var = "site")
+
+# Angles 
+angles_all <- trajectoryAngles(x)
+angles_all_df <- angles_all %>%
+  rownames_to_column(var = "site")
+
+# Convergence/Divergence
+convergence_all = trajectoryConvergence(x)
+
+
+
+# Export each metric
+write_csv(lengths_all_df, path = "tables/lengths_all.csv")
+write_csv(angles_all_df, path = "tables/angles_all.csv")
+write.csv(convergence_all, "tables/convergence_all.csv")
+```
+
+##### - Count x Predator
+
+```{r}
+# ---- 1. Create Bray-Curtis Dissimilarity Matrix ----
+dist_bray_predator <- vegdist(count_matrix_predator, method = "bray")
+
+# ---- 2. Extract metadata from rownames ----
+meta_from_rownames <- data.frame(
+  drainage_site_year = rownames(count_matrix_predator),
+  stringsAsFactors = FALSE
+) %>%
+  separate(drainage_site_year, into = c("site", "year"), sep = "-", remove = FALSE)
+
+# Define grouping (site) and time (year) vectors
+sites <- meta_from_rownames$site
+years <- as.numeric(meta_from_rownames$year)
+
+# Optional: Define colors for each site
+site_colors <- c("RB8" = "#1b9e77",
+                 "RB9" = "#d95f02",
+                 "RB10" = "#7570b3",
+                 "RB11" = "#e7298a",
+                 "RB13" = "#1f78b4")
+
+# ---- 3. Generate CTA Plot ----
+# Create plot and immediately save to file
+png(filename = "figures/CTA/predator_count_trajectory_plot.png", width = 8, height = 8, res = 300, units = "in")
+
+trajectoryPCoA(
+  d = dist_bray_predator,
+  sites = sites,
+  surveys = years,
+  survey.labels = T,
+  traj.colors = site_colors,
+  lwd = 2
+)
+
+legend("topleft", bty = "n",
+       legend = names(site_colors),
+       col = site_colors,
+       lwd = 2)
+
+dev.off()
+
+
+# ---- 1. Compute CTA Metrics ----
+# Lengths
+lengths_predator <- trajectoryLengths(d = dist_bray_predator, sites = sites, surveys = years)
+
+# Angles 
+angles_predator <- trajectoryAngles(d = dist_bray_predator, sites = sites, surveys = years)
+
+# Convergence/Divergence
+convergence_predator = trajectoryConvergence(d = dist_bray_predator, sites = sites, surveys = years)
+
+
+
+# Export each metric
+write_csv(lengths_predator, path = "tables/lengths_predator.csv")
+write_csv(angles_predator, path = "tables/angles_predator.csv")
+write.csv(convergence_predator, "tables/convergence_predator.csv")
+```
+
+##### - Count x Prey
+
+```{r}
+# ---- 1. Create Bray-Curtis Dissimilarity Matrix ----
+dist_bray_prey <- vegdist(count_matrix_prey, method = "bray")
+
+# ---- 2. Extract metadata from rownames ----
+meta_from_rownames <- data.frame(
+  drainage_site_year = rownames(count_matrix_prey),
+  stringsAsFactors = FALSE
+) %>%
+  separate(drainage_site_year, into = c("site", "year"), sep = "-", remove = FALSE)
+
+# Define grouping (site) and time (year) vectors
+sites <- meta_from_rownames$site
+years <- as.numeric(meta_from_rownames$year)
+
+# Optional: Define colors for each site
+site_colors <- c("RB8" = "#1b9e77",
+                 "RB9" = "#d95f02",
+                 "RB10" = "#7570b3",
+                 "RB11" = "#e7298a",
+                 "RB13" = "#1f78b4")
+
+# ---- 3. Generate CTA Plot ----
+# Create plot and immediately save to file
+png(filename = "figures/CTA/prey_count_trajectory_plot.png", width = 8, height = 8, res = 300, units = "in")
+
+trajectoryPCoA(
+  d = dist_bray_prey,
+  sites = sites,
+  surveys = years,
+  survey.labels = T,
+  traj.colors = site_colors,
+  lwd = 2
+)
+
+legend("topleft", bty = "n",
+       legend = names(site_colors),
+       col = site_colors,
+       lwd = 2)
+
+dev.off()
+
+
+# ---- 1. Compute CTA Metrics ----
+# Lengths
+lengths_prey <- trajectoryLengths(d = dist_bray_prey, sites = sites, surveys = years)
+
+# Angles 
+angles_prey <- trajectoryAngles(d = dist_bray_prey, sites = sites, surveys = years)
+
+# Convergence/Divergence
+convergence_prey = trajectoryConvergence(d = dist_bray_prey, sites = sites, surveys = years)
+
+
+
+# Export each metric
+write_csv(lengths_prey, path = "tables/lengths_prey.csv")
+write_csv(angles_prey, path = "tables/angles_prey.csv")
+write.csv(convergence_prey, "tables/convergence_prey.csv")
+```
+
+##### - Count x Invasive
+
+```{r}
+# ---- 1. Create Bray-Curtis Dissimilarity Matrix ----
+dist_bray_invasive <- vegdist(count_matrix_invasive, method = "bray")
+
+# ---- 2. Extract metadata from rownames ----
+meta_from_rownames <- data.frame(
+  drainage_site_year = rownames(count_matrix_invasive),
+  stringsAsFactors = FALSE
+) %>%
+  separate(drainage_site_year, into = c("site", "year"), sep = "-", remove = FALSE)
+
+# Define grouping (site) and time (year) vectors
+sites <- meta_from_rownames$site
+years <- as.numeric(meta_from_rownames$year)
+
+# Optional: Define colors for each site
+site_colors <- c("RB8" = "#1b9e77",
+                 "RB9" = "#d95f02",
+                 "RB10" = "#7570b3",
+                 "RB11" = "#e7298a",
+                 "RB13" = "#1f78b4")
+
+# ---- 3. Generate CTA Plot ----
+# Create plot and immediately save to file
+png(filename = "figures/CTA/invasive_count_trajectory_plot.png", width = 8, height = 8, res = 300, units = "in")
+
+trajectoryPCoA(
+  d = dist_bray_invasive,
+  sites = sites,
+  surveys = years,
+  survey.labels = T,
+  traj.colors = site_colors,
+  lwd = 2
+)
+
+legend("topleft", bty = "n",
+       legend = names(site_colors),
+       col = site_colors,
+       lwd = 2)
+
+dev.off()
+
+
+# ---- 1. Compute CTA Metrics ----
+# Lengths
+lengths_invasive <- trajectoryLengths(d = dist_bray_invasive, sites = sites, surveys = years)
+
+# Angles 
+angles_invasive <- trajectoryAngles(d = dist_bray_invasive, sites = sites, surveys = years)
+
+# Convergence/Divergence
+convergence_invasive = trajectoryConvergence(d = dist_bray_invasive, sites = sites, surveys = years)
+
+
+
+# Export each metric
+write_csv(lengths_invasive, path = "tables/lengths_invasive.csv")
+write_csv(angles_invasive, path = "tables/angles_invasive.csv")
+write.csv(convergence_invasive, "tables/convergence_invasive.csv")
+```
+
+##### -Biomass x All Species
+
+```{r}
+# ---- 1. Create Bray-Curtis Dissimilarity Matrix ----
+dist_bray_all_bio <- vegdist(biomass_matrix_all, method = "bray")
+
+# ---- 2. Extract metadata from rownames ----
+meta_from_rownames <- data.frame(
+  drainage_site_year = rownames(biomass_matrix_all),
+  stringsAsFactors = FALSE
+) %>%
+  separate(drainage_site_year, into = c("site", "year"), sep = "-", remove = FALSE)
+
+# Define grouping (site) and time (year) vectors
+sites <- meta_from_rownames$site
+years <- as.numeric(meta_from_rownames$year)
+
+# Optional: Define colors for each site
+site_colors <- c("RB8" = "#1b9e77",
+                 "RB9" = "#d95f02",
+                 "RB10" = "#7570b3",
+                 "RB11" = "#e7298a",
+                 "RB13" = "#1f78b4")
+
+# ---- 3. Generate CTA Plot ----
+# Create plot and immediately save to file
+png(filename = "figures/CTA/all_spp_biomass_trajectory_plot.png", width = 8, height = 8, res = 300, units = "in")
+
+trajectoryPCoA(
+  d = dist_bray_all_bio,
+  sites = sites,
+  surveys = years,
+  survey.labels = T,
+  traj.colors = site_colors,
+  lwd = 2
+)
+
+legend("topleft", bty = "n",
+       legend = names(site_colors),
+       col = site_colors,
+       lwd = 2)
+
+dev.off()
+
+
+# ---- 1. Compute CTA Metrics ----
+# Lengths
+lengths_all_bio <- trajectoryLengths(d = dist_bray_all_bio, sites = sites, surveys = years)
+
+# Angles 
+angles_all_bio <- trajectoryAngles(d = dist_bray_all_bio, sites = sites, surveys = years)
+
+# Convergence/Divergence
+convergence_all_bio = trajectoryConvergence(d = dist_bray_all_bio, sites = sites, surveys = years)
+
+
+
+# Export each metric
+write_csv(lengths_all_bio, path = "tables/lengths_all_bio.csv")
+write_csv(angles_all_bio, path = "tables/angles_all_bio.csv")
+write.csv(convergence_all_bio, "tables/convergence_all_bio.csv")
+```
+
+##### -Biomass x All Spp - May
+
+```{r}
+# ---- 1. Create Bray-Curtis Dissimilarity Matrix ----
+dist_bray_all_bio_May <- vegdist(biomass_matrix_all_May, method = "bray")
+
+# ---- 2. Extract metadata from rownames ----
+meta_from_rownames <- data.frame(
+  drainage_site_year = rownames(biomass_matrix_all_May),
+  stringsAsFactors = FALSE
+) %>%
+  separate(drainage_site_year, into = c("site", "year"), sep = "-", remove = FALSE)
+
+# Define grouping (site) and time (year) vectors
+sites <- meta_from_rownames$site
+years <- as.numeric(meta_from_rownames$year)
+
+# Optional: Define colors for each site
+site_colors <- c("RB8" = "#1b9e77",
+                 "RB9" = "#d95f02",
+                 "RB10" = "#7570b3",
+                 "RB11" = "#e7298a",
+                 "RB13" = "#1f78b4")
+
+# ---- 3. Generate CTA Plot ----
+# Create plot and immediately save to file
+png(filename = "figures/CTA/all_spp_biomass_trajectory_plot_May.png", width = 8, height = 8, res = 300, units = "in")
+
+trajectoryPCoA(
+  d = dist_bray_all_bio_May,
+  sites = sites,
+  surveys = years,
+  survey.labels = T,
+  traj.colors = site_colors,
+  lwd = 2
+)
+
+legend("topleft", bty = "n",
+       legend = names(site_colors),
+       col = site_colors,
+       lwd = 2)
+
+dev.off()
+
+
+# ---- 1. Compute CTA Metrics ----
+# Lengths
+lengths_all_bio_May <- trajectoryLengths(d = dist_bray_all_bio_May, sites = sites, surveys = years)
+
+# Angles 
+angles_all_bio_May <- trajectoryAngles(d = dist_bray_all_bio_May, sites = sites, surveys = years)
+
+# Convergence/Divergence
+convergence_all_bio_May = trajectoryConvergence(d = dist_bray_all_bio_May, sites = sites, surveys = years)
+
+
+
+# Export each metric
+write_csv(lengths_all_bio_May, path = "tables/lengths_all_bio_May.csv")
+write_csv(angles_all_bio_May, path = "tables/angles_all_bio_May.csv")
+write.csv(convergence_all_bio_May, "tables/convergence_all_bio_May.csv")
+```
+
+##### -Biomass x All Spp - April
+
+```{r}
+# ---- 1. Create Bray-Curtis Dissimilarity Matrix ----
+dist_bray_all_bio_April <- vegdist(biomass_matrix_all_April, method = "bray")
+
+# ---- 2. Extract metadata from rownames ----
+meta_from_rownames <- data.frame(
+  drainage_site_year = rownames(biomass_matrix_all_April),
+  stringsAsFactors = FALSE
+) %>%
+  separate(drainage_site_year, into = c("site", "year"), sep = "-", remove = FALSE)
+
+# Define grouping (site) and time (year) vectors
+sites <- meta_from_rownames$site
+years <- as.numeric(meta_from_rownames$year)
+
+# Optional: Define colors for each site
+site_colors <- c("RB8" = "#1b9e77",
+                 "RB9" = "#d95f02",
+                 "RB10" = "#7570b3",
+                 "RB11" = "#e7298a",
+                 "RB13" = "#1f78b4")
+
+# ---- 3. Generate CTA Plot ----
+# Create plot and immediately save to file
+png(filename = "figures/CTA/all_spp_biomass_trajectory_plot_April.png", width = 8, height = 8, res = 300, units = "in")
+
+trajectoryPCoA(
+  d = dist_bray_all_bio_April,
+  sites = sites,
+  surveys = years,
+  survey.labels = T,
+  traj.colors = site_colors,
+  lwd = 2
+)
+
+legend("topleft", bty = "n",
+       legend = names(site_colors),
+       col = site_colors,
+       lwd = 2)
+
+dev.off()
+
+
+# ---- 1. Compute CTA Metrics ----
+# Lengths
+lengths_all_bio_April <- trajectoryLengths(d = dist_bray_all_bio_April, sites = sites, surveys = years)
+
+# Angles 
+angles_all_bio_April <- trajectoryAngles(d = dist_bray_all_bio_April, sites = sites, surveys = years)
+
+# Convergence/Divergence
+convergence_all_bio_April = trajectoryConvergence(d = dist_bray_all_bio_April, sites = sites, surveys = years)
+
+
+
+# Export each metric
+write_csv(lengths_all_bio_April, path = "tables/lengths_all_bio_April.csv")
+write_csv(angles_all_bio_April, path = "tables/angles_all_bio_April.csv")
+write.csv(convergence_all_bio_April, "tables/convergence_all_bio_April.csv")
+```
+
+##### -Biomass x All Spp - December
+
+```{r}
+# ---- 1. Create Bray-Curtis Dissimilarity Matrix ----
+dist_bray_all_bio_December <- vegdist(biomass_matrix_all_December , method = "bray")
+
+# ---- 2. Extract metadata from rownames ----
+meta_from_rownames <- data.frame(
+  drainage_site_year = rownames(biomass_matrix_all_December ),
+  stringsAsFactors = FALSE
+) %>%
+  separate(drainage_site_year, into = c("site", "year"), sep = "-", remove = FALSE)
+
+# Define grouping (site) and time (year) vectors
+sites <- meta_from_rownames$site
+years <- as.numeric(meta_from_rownames$year)
+
+# Optional: Define colors for each site
+site_colors <- c("RB8" = "#1b9e77",
+                 "RB9" = "#d95f02",
+                 "RB10" = "#7570b3",
+                 "RB11" = "#e7298a",
+                 "RB13" = "#1f78b4")
+
+# ---- 3. Generate CTA Plot ----
+# Create plot and immediately save to file
+png(filename = "figures/CTA/all_spp_biomass_trajectory_plot_December .png", width = 8, height = 8, res = 300, units = "in")
+
+trajectoryPCoA(
+  d = dist_bray_all_bio_December ,
+  sites = sites,
+  surveys = years,
+  survey.labels = T,
+  traj.colors = site_colors,
+  lwd = 2
+)
+
+legend("topleft", bty = "n",
+       legend = names(site_colors),
+       col = site_colors,
+       lwd = 2)
+
+dev.off()
+
+
+# ---- 1. Compute CTA Metrics ----
+# Lengths
+lengths_all_bio_December  <- trajectoryLengths(d = dist_bray_all_bio_December, sites = sites, surveys = years)
+
+# Angles 
+angles_all_bio_December <- trajectoryAngles(d = dist_bray_all_bio_December, sites = sites, surveys = years)
+
+# Convergence/Divergence
+convergence_all_bio_December = trajectoryConvergence(d = dist_bray_all_bio_December , sites = sites, surveys = years)
+
+
+
+# Export each metric
+write_csv(lengths_all_bio_December, path = "tables/lengths_all_bio_December.csv")
+write_csv(angles_all_bio_December, path = "tables/angles_all_bio_May.csv")
+write.csv(convergence_all_bio_December, "tables/convergence_all_bio_December.csv")
+```
+
+##### -Biomass x Predator
+
+```{r}
+# ---- 1. Create Bray-Curtis Dissimilarity Matrix ----
+dist_bray_predator_bio <- vegdist(biomass_matrix_predator, method = "bray")
+
+# ---- 2. Extract metadata from rownames ----
+meta_from_rownames <- data.frame(
+  drainage_site_year = rownames(biomass_matrix_predator),
+  stringsAsFactors = FALSE
+) %>%
+  separate(drainage_site_year, into = c("site", "year"), sep = "-", remove = FALSE)
+
+# Define grouping (site) and time (year) vectors
+sites <- meta_from_rownames$site
+years <- as.numeric(meta_from_rownames$year)
+
+# Optional: Define colors for each site
+site_colors <- c("RB8" = "#1b9e77",
+                 "RB9" = "#d95f02",
+                 "RB10" = "#7570b3",
+                 "RB11" = "#e7298a",
+                 "RB13" = "#1f78b4")
+
+# ---- 3. Generate CTA Plot ----
+# Create plot and immediately save to file
+png(filename = "figures/CTA/predator_biomass_trajectory_plot.png", width = 8, height = 8, res = 300, units = "in")
+
+trajectoryPCoA(
+  d = dist_bray_predator_bio,
+  sites = sites,
+  surveys = years,
+  survey.labels = T,
+  traj.colors = site_colors,
+  lwd = 2
+)
+
+legend("topleft", bty = "n",
+       legend = names(site_colors),
+       col = site_colors,
+       lwd = 2)
+
+dev.off()
+
+
+# ---- 1. Compute CTA Metrics ----
+# Lengths
+lengths_predator_bio <- trajectoryLengths(d = dist_bray_predator_bio, sites = sites, surveys = years)
+
+# Angles 
+angles_predator_bio <- trajectoryAngles(d = dist_bray_predator_bio, sites = sites, surveys = years)
+
+# Convergence/Divergence
+convergence_predator_bio = trajectoryConvergence(d = dist_bray_predator_bio, sites = sites, surveys = years)
+
+
+
+# Export each metric
+write_csv(lengths_predator_bio, path = "tables/lengths_predator_bio.csv")
+write_csv(angles_predator_bio, path = "tables/angles_predator_bio.csv")
+write.csv(convergence_predator_bio, "tables/convergence_predator_bio.csv")
+```
+
+##### -Biomass x Prey
+
+```{r}
+# ---- 1. Create Bray-Curtis Dissimilarity Matrix ----
+dist_bray_prey_bio <- vegdist(biomass_matrix_prey, method = "bray")
+
+# ---- 2. Extract metadata from rownames ----
+meta_from_rownames <- data.frame(
+  drainage_site_year = rownames(biomass_matrix_prey),
+  stringsAsFactors = FALSE
+) %>%
+  separate(drainage_site_year, into = c("site", "year"), sep = "-", remove = FALSE)
+
+# Define grouping (site) and time (year) vectors
+sites <- meta_from_rownames$site
+years <- as.numeric(meta_from_rownames$year)
+
+# Optional: Define colors for each site
+site_colors <- c("RB8" = "#1b9e77",
+                 "RB9" = "#d95f02",
+                 "RB10" = "#7570b3",
+                 "RB11" = "#e7298a",
+                 "RB13" = "#1f78b4")
+
+# ---- 3. Generate CTA Plot ----
+# Create plot and immediately save to file
+png(filename = "figures/CTA/prey_biomass_trajectory_plot.png", width = 8, height = 8, res = 300, units = "in")
+
+trajectoryPCoA(
+  d = dist_bray_prey_bio,
+  sites = sites,
+  surveys = years,
+  survey.labels = T,
+  traj.colors = site_colors,
+  lwd = 2
+)
+
+legend("topleft", bty = "n",
+       legend = names(site_colors),
+       col = site_colors,
+       lwd = 2)
+
+dev.off()
+
+
+# ---- 1. Compute CTA Metrics ----
+# Lengths
+lengths_prey_bio <- trajectoryLengths(d = dist_bray_prey_bio, sites = sites, surveys = years)
+
+# Angles 
+angles_prey_bio <- trajectoryAngles(d = dist_bray_prey_bio, sites = sites, surveys = years)
+
+# Convergence/Divergence
+convergence_prey_bio = trajectoryConvergence(d = dist_bray_prey_bio, sites = sites, surveys = years)
+
+
+
+# Export each metric
+write_csv(lengths_prey_bio, path = "tables/lengths_prey_bio.csv")
+write_csv(angles_prey_bio, path = "tables/angles_prey_bio.csv")
+write.csv(convergence_prey_bio, "tables/convergence_prey_bio.csv")
+```
+
+##### -Biomass x Invasive
+
+```{r}
+# ---- 1. Create Bray-Curtis Dissimilarity Matrix ----
+dist_bray_invasive_bio <- vegdist(biomass_matrix_invasive, method = "bray")
+
+# ---- 2. Extract metadata from rownames ----
+meta_from_rownames <- data.frame(
+  drainage_site_year = rownames(biomass_matrix_invasive),
+  stringsAsFactors = FALSE
+) %>%
+  separate(drainage_site_year, into = c("site", "year"), sep = "-", remove = FALSE)
+
+# Define grouping (site) and time (year) vectors
+sites <- meta_from_rownames$site
+years <- as.numeric(meta_from_rownames$year)
+
+# Optional: Define colors for each site
+site_colors <- c("RB8" = "#1b9e77",
+                 "RB9" = "#d95f02",
+                 "RB10" = "#7570b3",
+                 "RB11" = "#e7298a",
+                 "RB13" = "#1f78b4")
+
+# ---- 3. Generate CTA Plot ----
+# Create plot and immediately save to file
+png(filename = "figures/CTA/invasive_biomass_trajectory_plot.png", width = 8, height = 8, res = 300, units = "in")
+
+trajectoryPCoA(
+  d = dist_bray_invasive_bio,
+  sites = sites,
+  surveys = years,
+  survey.labels = T,
+  traj.colors = site_colors,
+  lwd = 2
+)
+
+legend("topleft", bty = "n",
+       legend = names(site_colors),
+       col = site_colors,
+       lwd = 2)
+
+dev.off()
+
+
+# ---- 1. Compute CTA Metrics ----
+# Lengths
+lengths_invasive_bio <- trajectoryLengths(d = dist_bray_invasive_bio, sites = sites, surveys = years)
+
+# Angles 
+angles_invasive_bio <- trajectoryAngles(d = dist_bray_invasive_bio, sites = sites, surveys = years)
+
+# Convergence/Divergence
+convergence_invasive_bio = trajectoryConvergence(d = dist_bray_invasive_bio, sites = sites, surveys = years)
+
+
+
+# Export each metric
+write_csv(lengths_invasive_bio, path = "tables/lengths_invasive_bio.csv")
+write_csv(angles_invasive_bio, path = "tables/angles_invasive_bio.csv")
+write.csv(convergence_invasive_bio, "tables/convergence_invasive_bio.csv")
+```
