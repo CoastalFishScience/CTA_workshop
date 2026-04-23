@@ -491,8 +491,8 @@ convergence_all = trajectoryConvergence(x)
 
 
 # Export each metric
-write_csv(lengths_all_df, path = "tables/lengths_all.csv")
-write_csv(angles_all_df, path = "tables/angles_all.csv")
+write_csv(lengths_all_df, "tables/lengths_all_df.csv")
+write_csv(angles_all_df, "tables/angles_all_df.csv")
 write.csv(convergence_all, "tables/convergence_all.csv")
 ```
 
